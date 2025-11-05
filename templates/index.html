@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Resume Parser - Multiple Upload</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Smart Resume Parser</h1>
+        <p>Upload multiple resumes and job description to find good matches (80%+ score)</p>
+        
+        <!-- Stats Section -->
+        <div class="stats-section">
+            <h3>📊 Current Database Status</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-number" id="totalResumes">-</span>
+                    <span class="stat-label">Total Resumes</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="avgScore">-</span>
+                    <span class="stat-label">Avg Score</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number" id="highScores">-</span>
+                    <span class="stat-label">Good Scores (80%+)</span>
+                </div>
+            </div>
+            <p class="excel-info">All data saved to: <strong id="excelPath">data/all_resumes.xlsx</strong></p>
+        </div>
+        
+        <div class="job-description-section">
+            <h3>Job Description</h3>
+            <textarea id="jobDescription" placeholder="Paste job description here... Include skills, experience, requirements, etc." rows="6"></textarea>
+        </div>
+        
+        <div class="upload-section">
+            <h3>Upload Multiple Resumes</h3>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="file-input">
+                    <input type="file" id="fileInput" name="file" accept=".pdf,.docx,.txt" multiple required>
+                    <label for="fileInput">Choose Multiple Resume Files (PDF, DOCX, TXT)</label>
+                </div>
+                <div class="file-info" id="fileInfo" style="display: none;">
+                    <p>Selected files: <span id="fileCount">0</span></p>
+                    <ul id="fileList"></ul>
+                </div>
+                <button type="submit" class="upload-btn">Analyze & Score All Resumes</button>
+            </form>
+        </div>
+        
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Processing multiple resumes...</p>
+            <div class="progress-info">
+                <p id="progressText">Preparing files...</p>
+            </div>
+        </div>
+        
+        <div id="batchResults" class="batch-results" style="display: none;">
+            <h2>Batch Processing Results</h2>
+            <div class="summary-section">
+                <div class="summary-item">
+                    <span class="summary-number" id="totalProcessed">0</span>
+                    <span class="summary-label">Total Processed</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-number" id="totalSaved">0</span>
+                    <span class="summary-label">Saved to Excel</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-number" id="totalRejected">0</span>
+                    <span class="summary-label">Rejected</span>
+                </div>
+            </div>
+            <div id="batchResultsContent"></div>
+        </div>
+        
+        <!-- Resume Database Display -->
+        <div class="database-section">
+            <h3>📋 Current Resume Database</h3>
+            <button id="clearBtn" class="clear-btn">🗑️ Clear Database</button>
+
+            <div class="table-controls">
+                <button id="refreshBtn" class="refresh-btn">🔄 Refresh Data</button>
+                <button id="downloadBtn" class="download-btn">📥 Download Excel (When Needed)</button>
+            </div>
+            <div class="table-container">
+                <table id="resumeTable" class="resume-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone Number</th>
+                            <th>ATS Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resumeTableBody">
+                        <tr>
+                            <td colspan="4" class="no-data">No resumes uploaded yet</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Load stats and resumes when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadResumes();
+        });
+        
+        // Handle file selection
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = e.target.files;
+            const fileInfo = document.getElementById('fileInfo');
+            const fileCount = document.getElementById('fileCount');
+            const fileList = document.getElementById('fileList');
+            
+            if (files.length > 0) {
+                fileInfo.style.display = 'block';
+                fileCount.textContent = files.length;
+                
+                fileList.innerHTML = '';
+                Array.from(files).forEach(file => {
+                    const li = document.createElement('li');
+                    li.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                    fileList.appendChild(li);
+                });
+            } else {
+                fileInfo.style.display = 'none';
+            }
+        });
+        
+        async function loadStats() {
+            try {
+                const response = await fetch('/stats');
+                const stats = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('totalResumes').textContent = stats.total_resumes;
+                    document.getElementById('avgScore').textContent = stats.average_score + '%';
+                    document.getElementById('highScores').textContent = stats.high_score_count;
+                    document.getElementById('excelPath').textContent = stats.excel_file;
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        async function loadResumes() {
+            try {
+                const response = await fetch('/get_resumes');
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResumes(data.resumes);
+                }
+            } catch (error) {
+                console.error('Error loading resumes:', error);
+            }
+        }
+        
+        function displayResumes(resumes) {
+            const tbody = document.getElementById('resumeTableBody');
+            
+            if (resumes.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="no-data">No resumes uploaded yet</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = resumes.map(resume => `
+                <tr>
+                    <td>${resume.Name || 'N/A'}</td>
+                    <td>${resume.Email || 'N/A'}</td>
+                    <td>${resume['Phone Number'] || 'N/A'}</td>
+                    <td class="score-cell ${getScoreClass(resume['ATS Score'])}">${resume['ATS Score'] || 'N/A'}</td>
+                </tr>
+            `).join('');
+        }
+        
+        function getScoreClass(score) {
+            if (!score) return '';
+            const numScore = parseInt(score.replace('%', ''));
+            if (numScore >= 90) return 'high-score';
+            if (numScore >= 80) return 'medium-score';
+            return 'low-score';
+        }
+        
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const fileInput = document.getElementById('fileInput');
+            const jobDescription = document.getElementById('jobDescription').value;
+            
+            if (fileInput.files.length === 0) {
+                showError('Please select at least one file.');
+                return;
+            }
+            
+            // Add all selected files
+            Array.from(fileInput.files).forEach(file => {
+                formData.append('file', file);
+            });
+            formData.append('job_description', jobDescription);
+            
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('batchResults').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayBatchResults(result);
+                    document.getElementById('batchResults').style.display = 'block';
+                    
+                    // Reload stats and resumes after successful upload
+                    loadStats();
+                    loadResumes();
+                    
+                    // Clear file input
+                    fileInput.value = '';
+                    document.getElementById('fileInfo').style.display = 'none';
+                } else {
+                    showError(result.error);
+                }
+            } catch (error) {
+                showError('An error occurred while processing the files.');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        });
+        
+        function displayBatchResults(result) {
+            // Update summary
+            document.getElementById('totalProcessed').textContent = result.summary.total_files;
+            document.getElementById('totalSaved').textContent = result.summary.saved_count;
+            document.getElementById('totalRejected').textContent = result.summary.rejected_count;
+            
+            // Display individual results
+            const content = document.getElementById('batchResultsContent');
+            content.innerHTML = `
+                <div class="summary-message">
+                    <p>${result.summary.message}</p>
+                </div>
+                <div class="results-list">
+                    ${result.results.map(item => `
+                        <div class="result-item ${item.status === 'Saved' ? 'saved' : item.status === 'Rejected' ? 'rejected' : 'error'}">
+                            <div class="result-header">
+                                <strong>${item.filename}</strong>
+                                <span class="status-badge ${item.status === 'Saved' ? 'saved' : item.status === 'Rejected' ? 'rejected' : 'error'}">
+                                    ${item.status}
+                                </span>
+                            </div>
+                            ${item.name ? `<div><strong>Name:</strong> ${item.name}</div>` : ''}
+                            ${item.email ? `<div><strong>Email:</strong> ${item.email}</div>` : ''}
+                            ${item.match_score ? `<div><strong>ATS Score:</strong> ${item.match_score}%</div>` : ''}
+                            ${item.error ? `<div class="error-text"><strong>Error:</strong> ${item.error}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+        
+        // Refresh button
+        document.getElementById('refreshBtn').addEventListener('click', function() {
+            loadStats();
+            loadResumes();
+        });
+        
+        // Download button (only when needed)
+        document.getElementById('downloadBtn').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/download');
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'resume_shortlist.xlsx';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                }
+            } catch (error) {
+                showError('Error downloading file.');
+            }
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', async () => {
+    if (!confirm("Are you sure you want to clear all resume data?")) return;
+
+    try {
+        const response = await fetch('/clear', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(result.message);
+            loadStats();   // stats refresh karo
+            loadResumes(); // table refresh karo
+        } else {
+            showError(result.error);
+        }
+    } catch (error) {
+        showError('Error clearing database.');
+    }
+});
+
+    </script>
+</body>
+</html>
