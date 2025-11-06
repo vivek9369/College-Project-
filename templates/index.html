@@ -5,9 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Resume Parser - Multiple Upload</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .header-actions {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+        }
+        .signout-btn {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+        }
+        .signout-btn:hover {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+        }
+        .container {
+            position: relative;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
+        <div class="header-actions">
+            <button id="signoutBtn" class="signout-btn">🚪 Sign Out</button>
+        </div>
         <h1>Smart Resume Parser</h1>
         <p>Upload multiple resumes and job description to find good matches (80%+ score)</p>
         
@@ -324,6 +354,28 @@
         showError('Error clearing database.');
     }
 });
+
+        // Sign out functionality
+        document.getElementById('signoutBtn').addEventListener('click', async () => {
+            try {
+                // Sign out from backend
+                const response = await fetch('/auth/signout', {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    // Redirect to home/login page
+                    window.location.href = '/';
+                } else {
+                    // Still redirect even if backend signout fails
+                    window.location.href = '/';
+                }
+            } catch (error) {
+                console.error('Error signing out:', error);
+                // Redirect anyway
+                window.location.href = '/';
+            }
+        });
 
     </script>
 </body>

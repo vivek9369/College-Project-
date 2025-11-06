@@ -5,10 +5,7 @@ import spacy
 
 class ResumeParser:
     def __init__(self):
-        try:
-            self.nlp = spacy.load("en_core_web_sm")
-        except:
-            self.nlp = None
+        self.nlp = None  # NLP functionality disabled for now
     
     def parse_resume(self, file_path):
         """Parse resume and extract only essential information"""
