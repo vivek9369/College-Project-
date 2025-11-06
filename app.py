@@ -1,6 +1,7 @@
-from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for, flash
 import os
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 from resume_parser import ResumeParser
 from job_matcher import JobMatcher
 import pandas as pd
@@ -25,6 +26,15 @@ os.makedirs('data', exist_ok=True)
 EXCEL_FILE = 'data/all_resumes.xlsx'
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'txt'}
 
+# In-memory user storage (replace with database in production)
+users = {
+    'admin': {
+        'password': generate_password_hash('admin123'),
+        'email': 'admin@resumeproject.com',
+        'name': 'Administrator'
+    }
+}
+
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -35,15 +45,86 @@ def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('authenticated'):
-            return redirect(url_for('home'))
+            return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
 
 
 @app.route('/')
 def home():
-    """Home/login page with Clerk authentication"""
-    # If already authenticated, redirect to dashboard
+    """Home page - redirect based on authentication"""
+    if session.get('authenticated'):
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('login'))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Traditional login page"""
+    if session.get('authenticated'):
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        if username in users and check_password_hash(users[username]['password'], password):
+            session['authenticated'] = True
+            session['username'] = username
+            session['user_name'] = users[username]['name']
+            session['auth_type'] = 'traditional'
+            flash('Login successful!', 'success')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Invalid username or password', 'error')
+    
+    return render_template('login.html')
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """User registration page"""
+    if session.get('authenticated'):
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+        email = request.form.get('email')
+        name = request.form.get('name')
+        
+        if username in users:
+            flash('Username already exists', 'error')
+        elif password != confirm_password:
+            flash('Passwords do not match', 'error')
+        elif len(password) < 6:
+            flash('Password must be at least 6 characters', 'error')
+        elif not email or not name:
+            flash('Please fill in all fields', 'error')
+        else:
+            users[username] = {
+                'password': generate_password_hash(password),
+                'email': email,
+                'name': name
+            }
+            flash('Registration successful! Please login.', 'success')
+            return redirect(url_for('login'))
+    
+    return render_template('register.html')
+
+
+@app.route('/logout')
+def logout():
+    """Logout route"""
+    session.clear()
+    flash('You have been logged out successfully', 'info')
+    return redirect(url_for('login'))
+
+
+@app.route('/clerk-login')
+def clerk_login():
+    """Clerk authentication login page (optional)"""
     if session.get('authenticated'):
         return redirect(url_for('dashboard'))
     return render_template('home.html', clerk_publishable_key=app.config['CLERK_PUBLISHABLE_KEY'])
@@ -58,36 +139,29 @@ def verify_auth():
             return jsonify({'error': 'No session token provided'}), 400
         
         # Verify session token with Clerk backend API
-        # Clerk uses JWT tokens, we can verify them by decoding
-        # For production, use proper JWT verification with Clerk's public key
         if not app.config.get('CLERK_SECRET_KEY'):
-            # Development mode: accept token if provided
             session['authenticated'] = True
+            session['auth_type'] = 'clerk'
             return jsonify({'success': True, 'message': 'Session created (dev mode)'})
         
-        # Verify token with Clerk API
         headers = {
             'Authorization': f'Bearer {app.config["CLERK_SECRET_KEY"]}',
             'Content-Type': 'application/json'
         }
         
-        # Get session info from Clerk
-        # Note: Clerk's session token is a JWT that can be verified
-        # For simplicity, we'll verify by checking if we can decode user info
         try:
-            # In production, verify JWT signature with Clerk's public key
-            # For now, we'll trust the token if it's provided (frontend already verified)
             session['authenticated'] = True
+            session['auth_type'] = 'clerk'
             return jsonify({'success': True, 'message': 'Session verified'})
         except Exception as verify_error:
-            # If verification fails but we have a token, still allow (dev mode)
             session['authenticated'] = True
+            session['auth_type'] = 'clerk'
             return jsonify({'success': True, 'message': 'Session created'})
             
     except Exception as e:
-        # For development: allow authentication if token is provided
         if request.json and request.json.get('session_token'):
             session['authenticated'] = True
+            session['auth_type'] = 'clerk'
             return jsonify({'success': True, 'message': 'Session created (dev mode)'})
         return jsonify({'error': str(e)}), 500
 
@@ -103,7 +177,10 @@ def signout():
 @require_auth
 def dashboard():
     """Main dashboard page - protected route"""
-    return render_template('index.html', clerk_publishable_key=app.config['CLERK_PUBLISHABLE_KEY'])
+    user_name = session.get('user_name', session.get('username', 'User'))
+    return render_template('index.html', 
+                         user_name=user_name,
+                         clerk_publishable_key=app.config['CLERK_PUBLISHABLE_KEY'])
 
 
 @app.route('/upload', methods=['POST'])
@@ -148,7 +225,6 @@ def upload_file():
                 save_to_excel(excel_data)
                 saved_count += 1
                 status = "Saved"
-
 
                 results.append({
                     'filename': filename,
@@ -253,7 +329,7 @@ def get_resumes():
 @app.route('/download')
 @require_auth
 def download_excel():
-    """Download the Excel file with essential data - only when needed"""
+    """Download the Excel file with essential data"""
     if os.path.exists(EXCEL_FILE):
         return send_file(EXCEL_FILE, as_attachment=True, download_name='resume_shortlist.xlsx')
     return jsonify({'error': 'No resume data found'}), 404
@@ -298,7 +374,7 @@ def get_stats():
 def clear_resumes():
     try:
         if os.path.exists(EXCEL_FILE):
-            os.remove(EXCEL_FILE)  # pura file hata do
+            os.remove(EXCEL_FILE)
         return jsonify({'success': True, 'message': 'All resume data cleared'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
